@@ -1,4 +1,4 @@
-# Projet chiffrement et dechiffrement entre 2 appareils en utilisant Diffie-Hellman (DH), Digital Signature Algorithm (DSA), Advanced Encryption Standard (AES). 
+# Projet de chiffrement et de déchiffrement entre deux appareils utilisant Diffie-Hellman (DH), le Digital Signature Algorithm (DSA) et l’Advanced Encryption Standard (AES).
 
 ## Table of Contents
 1. [Info Générales](#general-info)  
