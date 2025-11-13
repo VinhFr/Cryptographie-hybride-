@@ -87,18 +87,64 @@ int accept_client(int server_fd){
   return client_fd;
 }
 
-ssize_t send_data(int sockfd, const void *data, size_t len){
-  ssize_t sent_bytes = send(sockfd, data, len, 0);
-  if (sent_bytes < 0) {
-      perror("Erreur send");
+ssize_t send_n_data(int sockfd, const void *buffer, size_t len){
+  size_t left = len;
+  const char *p = buffer;
+  while (left){
+    ssize_t sent_bytes = send(sockfd, p, left, 0);
+    if (sent_bytes < 0) {
+        perror("Erreur send");
+        return -1;
+    }
+    left -= sent_bytes;
+    p += sent_bytes;
   }
   return sent_bytes;
 }
 
-ssize_t recv_data(int sockfd, void *buffer, size_t len){
-  ssize_t recv_bytes = recv(sockfd, buffer, len, 0);
-  if (recv_bytes < 0) {
-      perror("Erreur recv");
+ssize_t recv_n_data(int sockfd, void *buffer, size_t len){
+  size_t left = len;
+  char *p = buffer;
+  while (left){
+    ssize_t recv_bytes = recv(sockfd, p, left, 0);
+    if (recv_bytes < 0) {
+        perror("Erreur recv");
+        return -1;
+    }
+    left -= recv_bytes;
+    p += recv_bytes;
   }
   return recv_bytes;
+}
+
+/* Parametres :
+   be - Big-Endian
+   htonl() : host -> network(32-bit)
+*/
+int send_blob(int sockfd, const unsigned char *buffer, uint32_t len){
+  uint32_t be = htonl(len);
+  if (send_n_data(sockfd, &be, 4) != 4) return -1;
+  if (len > 0 && send_n_data(sockfd,buffer,len) != (ssize_t)len) return -1;
+  return 0;
+}
+
+/*
+  ntohl() : network -> host (32-bit)
+*/
+int recv_blob(int sockfd, unsigned char **out, uint32_t *out_len){
+  uint32_t be;
+  if (recv_n_data(sockfd,&be,4) != 4) return -1;
+  uint32_t len = ntohl(be);
+  unsigned char *buffer = NULL;
+  if (len){
+    buffer = OPENSSL_malloc(len);
+    if (!buffer) return -1;
+    if (recv_n_data(sockfd, buffer, len) != (ssize_t)len){
+      OPENSSL_free(buffer);
+      return -1;
+    }
+  }
+  *out = buffer;
+  *out_len = len;
+  return 0;
 }
