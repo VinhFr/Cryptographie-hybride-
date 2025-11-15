@@ -99,3 +99,54 @@ err:
     EVP_PKEY_CTX_free(kctx);
     return NULL;
 }
+
+unsigned char *dsa_sign(EVP_PKEY *priv, const unsigned char *msg, size_t msglen, size_t *siglen) {
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    unsigned char *sig = NULL;
+    size_t slen = 0;
+    if (!ctx) return NULL;
+
+    // MUST specify SHA256 for DSA
+    if (EVP_DigestSignInit(ctx, NULL, EVP_sha256(), NULL, priv) <= 0)
+        goto err;
+
+    // Lấy độ dài chữ ký cần thiết
+    if (EVP_DigestSign(ctx, NULL, &slen, msg, msglen) <= 0)
+        goto err;
+
+    sig = OPENSSL_malloc(slen);
+    if (!sig) goto err;
+
+    // Ký số thật
+    if (EVP_DigestSign(ctx, sig, &slen, msg, msglen) <= 0) {
+        OPENSSL_free(sig);
+        sig = NULL;
+        goto err;
+    }
+
+    *siglen = slen;
+
+err:
+    EVP_MD_CTX_free(ctx);
+    return sig;
+}
+
+int dsa_verify(EVP_PKEY *pub, const unsigned char *msg, size_t msglen,
+               const unsigned char *sig, size_t siglen) {
+
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    int ok = 0;
+
+    if (!ctx) return 0;
+
+    // MUST specify SHA256 for DSA verify
+    if (EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, pub) <= 0)
+        goto end;
+
+    if (EVP_DigestVerify(ctx, sig, siglen, msg, msglen) == 1)
+        ok = 1;   // OK
+
+end:
+    EVP_MD_CTX_free(ctx);
+    return ok;
+}
