@@ -150,3 +150,48 @@ end:
     EVP_MD_CTX_free(ctx);
     return ok;
 }
+
+// derive shared secret using classic DH
+// hàm này dùng để tạo share-secret-key chung giữa 2 thiết bị.
+// nhận vào publickey của đối tác và private key của mình để tính
+unsigned char *dh_derive_shared(EVP_PKEY *priv, EVP_PKEY *peer_pub, size_t *secret_len) {
+    EVP_PKEY_CTX *ctx = NULL;
+    unsigned char *secret = NULL;
+    size_t slen = 0;
+
+    // Context dựa trên private key DH của mình
+    ctx = EVP_PKEY_CTX_new(priv, NULL);
+    if (!ctx) return NULL;
+
+    // Khởi tạo quá trình derive (tính shared secret)
+    if (EVP_PKEY_derive_init(ctx) <= 0) goto err;
+
+    // Gán public key của peer (đối tác)
+    if (EVP_PKEY_derive_set_peer(ctx, peer_pub) <= 0) goto err;
+
+    // Lấy độ dài của shared secret
+    if (EVP_PKEY_derive(ctx, NULL, &slen) <= 0) goto err;
+
+    // Cấp phát bộ nhớ để chứa shared secret
+    secret = OPENSSL_malloc(slen);
+    if (!secret) goto err;
+
+    // Derive thực tế: tạo ra shared secret
+    if (EVP_PKEY_derive(ctx, secret, &slen) <= 0) {
+        OPENSSL_free(secret);
+        secret = NULL;
+        goto err;
+    }
+
+    *secret_len = slen;
+
+err:
+    EVP_PKEY_CTX_free(ctx);
+    return secret;
+}
+
+int derive_aes_key( const unsigned char *shared, size_t shared_len,unsigned char *out32) {
+    if (!EVP_Digest(shared, shared_len, out32, NULL, EVP_sha256(), NULL))
+        return 0;
+    return 1;
+}
