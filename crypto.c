@@ -195,3 +195,82 @@ int derive_aes_key( const unsigned char *shared, size_t shared_len,unsigned char
         return 0;
     return 1;
 }
+
+// AES-GCM encrypt: returns ciphertext (OPENSSL_malloc) with tag appended after ciphertext
+// out: ct = malloc(ivlen + ctlen + taglen) ??? We'll send iv (12 bytes) separately then ct and tag separately.
+// Simpler: encrypt and return ct and tag buffers separately.
+int aes_gcm_encrypt(const unsigned char *key, int keylen, const unsigned char *plaintext, int ptlen, unsigned char **out_iv, int *iv_len, unsigned char **out_ct, int *ct_len, unsigned char **out_tag, int *tag_len) {
+    EVP_CIPHER_CTX *ctx = NULL;
+    unsigned char *iv = NULL, *ct = NULL, *tag = NULL;
+    int len, flen;
+    int ret = 0;
+    int tlen = 16;
+    int ct_alloc = ptlen + 16;
+
+    iv = OPENSSL_malloc(12);
+    if (!iv) goto cleanup;
+    if (RAND_bytes(iv, 12) != 1) goto cleanup;
+
+    ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) goto cleanup;
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) goto cleanup;
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, NULL) != 1) goto cleanup;
+    if (EVP_EncryptInit_ex(ctx, NULL, NULL, key, iv) != 1) goto cleanup;
+
+    ct = OPENSSL_malloc(ct_alloc);
+    if (!ct) goto cleanup;
+
+    if (EVP_EncryptUpdate(ctx, ct, &len, plaintext, ptlen) != 1) goto cleanup;
+    flen = len;
+
+    if (EVP_EncryptFinal_ex(ctx, ct + len, &len) != 1) goto cleanup;
+    flen += len;
+
+    tag = OPENSSL_malloc(tlen);
+    if (!tag) goto cleanup;
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, tlen, tag) != 1) goto cleanup;
+
+    *out_iv = iv; *iv_len = 12;
+    *out_ct = ct; *ct_len = flen;
+    *out_tag = tag; *tag_len = tlen;
+    iv = ct = tag = NULL; // handed off
+    ret = 1;
+cleanup:
+    if (iv) OPENSSL_free(iv);
+    if (ct) OPENSSL_free(ct);
+    if (tag) OPENSSL_free(tag);
+    if (ctx) EVP_CIPHER_CTX_free(ctx);
+    return ret;
+}
+
+// AES-GCM decrypt; returns plaintext allocated by OPENSSL_malloc
+int aes_gcm_decrypt( const unsigned char *key, int keylen, const unsigned char *iv, int ivlen,const unsigned char *ct, int ctlen,const unsigned char *tag, int taglen, unsigned char **out_plain, int *out_len) {
+    EVP_CIPHER_CTX *ctx = NULL;
+    unsigned char *pt = NULL;
+    int len, flen;
+    int ret = 0;
+
+    ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) goto cleanup;
+    if (EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) goto cleanup;
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, ivlen, NULL) != 1) goto cleanup;
+    if (EVP_DecryptInit_ex(ctx, NULL, NULL, key, iv) != 1) goto cleanup;
+
+    pt = OPENSSL_malloc(ctlen + 16);
+    if (!pt) goto cleanup;
+
+    if (EVP_DecryptUpdate(ctx, pt, &len, ct, ctlen) != 1) goto cleanup;
+    flen = len;
+
+    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, taglen, (void *)tag) != 1) goto cleanup;
+    if (EVP_DecryptFinal_ex(ctx, pt + len, &len) != 1) goto cleanup; // will fail if tag mismatch
+    flen += len;
+
+    *out_plain = pt; *out_len = flen;
+    pt = NULL;
+    ret = 1;
+cleanup:
+    if (pt) OPENSSL_free(pt);
+    if (ctx) EVP_CIPHER_CTX_free(ctx);
+    return ret;
+}
