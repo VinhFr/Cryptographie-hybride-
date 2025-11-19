@@ -1,3 +1,13 @@
+#include "crypto.h"   // prototypes của các hàm crypto
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/err.h>
+#include <openssl/dh.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
 
 /*
   Paramètres :
@@ -14,52 +24,58 @@
 
   Note : la clé retournée dans pkey contient à la fois la clé privée et la clé publique.
 */
-EVP_PKEY *generate_dh_key(){
-  EVP_PKEY *pkey = NULL;
-  EVP_PKEY_CTX *pctx = NULL;
-  EVP_PKEY_CTX *kctx = NULL;
+EVP_PKEY *generate_dh_key() {
+    EVP_PKEY *pkey = NULL;
+    DH *dh = NULL;
 
-  // Création d'un contexte pour générer les paramètres DH (p et g)
-  pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_DH, NULL);
-  if (!pctx)  return NULL;
+    // 1) Tạo DH với độ dài 2048 bits và generator 2
+    dh = DH_new();
+    if (!dh) return NULL;
 
-  // Initialisation de la génération des paramètres DH
-  if (EVP_PKEY_paramgen_init(pctx) <= 0) goto err;
+    if (DH_generate_parameters_ex(dh, 2048, DH_GENERATOR_2, NULL) != 1) {
+        DH_free(dh);
+        return NULL;
+    }
 
-  // Définition de la longueur de la clé DH (ici 2048 bits)
-  if (EVP_PKEY_CTX_set_dh_paramgen_length(pctx, 2048) <= 0) goto err;
+    // 2) Tạo EVP_PKEY từ DH
+    pkey = EVP_PKEY_new();
+    if (!pkey) {
+        DH_free(dh);
+        return NULL;
+    }
 
-  EVP_PKEY *params = NULL;
+    if (EVP_PKEY_assign_DH(pkey, dh) != 1) {
+        DH_free(dh);
+        EVP_PKEY_free(pkey);
+        return NULL;
+    }
+    // Lưu ý: pkey giờ quản lý dh, không cần free dh nữa
 
-  // Génération effective des paramètres DH
-  if (EVP_PKEY_paramgen(pctx, &params) <= 0) goto err;
+    // 3) Tạo keypair (public/private) cho DH
+    EVP_PKEY_CTX *kctx = EVP_PKEY_CTX_new(pkey, NULL);
+    if (!kctx) {
+        EVP_PKEY_free(pkey);
+        return NULL;
+    }
 
-  // Création d'un contexte pour générer la paire de clés DH en se basant sur les paramètres générés
-  kctx = EVP_PKEY_CTX_new(params, NULL);
-  if (!kctx) {
-      EVP_PKEY_free(params);
-      goto err;
-  }
-  if (EVP_PKEY_keygen_init(kctx) <= 0) {
-      EVP_PKEY_free(params);
-      goto err;
-  }
+    if (EVP_PKEY_keygen_init(kctx) <= 0) {
+        EVP_PKEY_CTX_free(kctx);
+        EVP_PKEY_free(pkey);
+        return NULL;
+    }
 
-  // Génération de la paire de clés DH (clé publique et privée)
-  if (EVP_PKEY_keygen(kctx, &pkey) <= 0) {
-      EVP_PKEY_free(params);
-      goto err;
-  }
-  EVP_PKEY_free(params);
-  EVP_PKEY_CTX_free(pctx);
-  EVP_PKEY_CTX_free(kctx);
-  return pkey;
-err:
-  EVP_PKEY_free(params);
-  EVP_PKEY_CTX_free(pctx);
-  EVP_PKEY_CTX_free(kctx);
-  return NULL;
+    EVP_PKEY *dh_key = NULL;
+    if (EVP_PKEY_keygen(kctx, &dh_key) <= 0) {
+        EVP_PKEY_CTX_free(kctx);
+        EVP_PKEY_free(pkey);
+        return NULL;
+    }
+
+    EVP_PKEY_free(pkey);
+    EVP_PKEY_CTX_free(kctx);
+    return dh_key;
 }
+
 
 EVP_PKEY *generate_dsa_key() {
     EVP_PKEY *params = NULL;
@@ -129,6 +145,21 @@ unsigned char *dsa_sign(EVP_PKEY *priv, const unsigned char *msg, size_t msglen,
 err:
     EVP_MD_CTX_free(ctx);
     return sig;
+}
+
+// serialize public key to DER (i2d)
+unsigned char *pubkey_to_der(EVP_PKEY *pkey, int *out_len) {
+    unsigned char *der = NULL;
+    int len = i2d_PUBKEY(pkey, &der);
+    if (len <= 0) { if (der) OPENSSL_free(der); return NULL; }
+    *out_len = len;
+    return der;
+}
+
+// load public key from DER
+EVP_PKEY *der_to_pubkey(const unsigned char *der, int der_len) {
+    const unsigned char *p = der;
+    return d2i_PUBKEY(NULL, &p, der_len);
 }
 
 int dsa_verify(EVP_PKEY *pub, const unsigned char *msg, size_t msglen,
@@ -273,4 +304,66 @@ cleanup:
     if (pt) OPENSSL_free(pt);
     if (ctx) EVP_CIPHER_CTX_free(ctx);
     return ret;
+}
+
+int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer_sig_pub, unsigned char *aes_key_out) {
+    int ok = 0;
+    unsigned char *kx_pub_der = NULL, *sig_of_kx = NULL;
+    unsigned char *kx_pub_peer = NULL, *sig_of_kx_peer = NULL;
+    int kx_pub_len = 0;
+    size_t sig_of_kx_len = 0;
+    uint32_t len = 0;
+    EVP_PKEY *peer_kx_key = NULL;
+
+    // 1) Serialize DH public key
+    kx_pub_der = pubkey_to_der(kx_priv, &kx_pub_len);
+    if (!kx_pub_der) goto cleanup;
+
+    // 2) Sign DH public key bytes with DSA
+    sig_of_kx = dsa_sign(sig_priv, kx_pub_der, kx_pub_len, &sig_of_kx_len);
+    if (!sig_of_kx) goto cleanup;
+
+    // 3) Send: [kx_pub][signature]
+    if (send_blob(sock, kx_pub_der, kx_pub_len) < 0) goto cleanup;
+    if (sig_of_kx_len > UINT32_MAX || send_blob(sock, sig_of_kx, (uint32_t)sig_of_kx_len) < 0) goto cleanup;
+
+    // 4) Receive peer DH public key
+    if (recv_blob(sock, &kx_pub_peer, &len) < 0 || !kx_pub_peer || len == 0) goto cleanup;
+    int peer_kx_len = (int)len;
+
+    // 5) Receive peer signature
+    if (recv_blob(sock, &sig_of_kx_peer, &len) < 0 || !sig_of_kx_peer) goto cleanup;
+    uint32_t sig_of_kx_peer_len = len;
+
+    // 6) Verify peer signature over their DH public key
+    if (!dsa_verify(peer_sig_pub, kx_pub_peer, peer_kx_len, sig_of_kx_peer, sig_of_kx_peer_len)) {
+        fprintf(stderr, "Signature verification failed! Aborting handshake.\n");
+        goto cleanup;
+    }
+
+    // 7) Reconstruct peer DH public key
+    peer_kx_key = der_to_pubkey(kx_pub_peer, peer_kx_len);
+    if (!peer_kx_key) goto cleanup;
+
+    // 8) Derive shared secret
+    size_t secret_len = 0;
+    unsigned char *secret = dh_derive_shared(kx_priv, peer_kx_key, &secret_len);
+    if (!secret) goto cleanup;
+
+    // 9) Derive AES-256 key from shared secret
+    if (!derive_aes_key(secret, secret_len, aes_key_out)) {
+        OPENSSL_free(secret);
+        goto cleanup;
+    }
+    OPENSSL_free(secret);
+
+    ok = 1;
+
+cleanup:
+    if (kx_pub_der) OPENSSL_free(kx_pub_der);
+    if (sig_of_kx) OPENSSL_free(sig_of_kx);
+    if (kx_pub_peer) OPENSSL_free(kx_pub_peer);
+    if (sig_of_kx_peer) OPENSSL_free(sig_of_kx_peer);
+    EVP_PKEY_free(peer_kx_key);
+    return ok;
 }

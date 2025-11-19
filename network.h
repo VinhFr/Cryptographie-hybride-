@@ -2,7 +2,8 @@
 #define NETWORK_H
 
 #include <stddef.h>
-
+#include <sys/types.h>
+#include <stdint.h>
 /* =================================================================== */
 /*   Fichier contient des fonctions "socket" pour la communication     */
 /*   entre deux appareils (1 client - 1 serveur).                      */
@@ -47,4 +48,7 @@ int send_blob(int sockfd, const unsigned char *buffer, uint32_t len);
 
 /* Recu header (taille de paquet) et data */
 int recv_blob(int sockfd, unsigned char **out, uint32_t *out_len);
+
+int start_client(const char *addr, int port);
+int start_server(const char *addr, int port);
 #endif
