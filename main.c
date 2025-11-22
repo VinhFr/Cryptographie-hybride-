@@ -102,7 +102,8 @@ int main(int argc, char **argv) {
     if (!kx || !sig) { fprintf(stderr, "Keygen failed\n"); return 1; }
 
     unsigned char aes_key[32];
-    if (!do_handshake(sock, kx, sig, aes_key)) {
+    EVP_PKEY *peer_sig_pub = NULL;  // thêm dòng này
+    if (!do_handshake(sock, kx, sig,peer_sig_pub, aes_key)) {
         fprintf(stderr, "Handshake failed\n"); close(sock); return 1;
     }
     printf("Handshake done. AES-256 key derived.\n");
