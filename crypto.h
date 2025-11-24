@@ -11,8 +11,9 @@
 #include <openssl/err.h>
 
 /* ---------- Key generation ---------- */
-EVP_PKEY *generate_dh_key();
-EVP_PKEY *generate_dsa_key();
+EVP_PKEY *generate_dh_key(const char *param_file);
+EVP_PKEY *load_dsa_private(const char *filename);
+EVP_PKEY *load_dsa_public(const char *filename);
 
 /* ---------- DSA sign / verify ---------- */
 unsigned char *dsa_sign(EVP_PKEY *priv, const unsigned char *msg, size_t msglen, size_t *siglen);

@@ -24,96 +24,84 @@
 
   Note : la clé retournée dans pkey contient à la fois la clé privée et la clé publique.
 */
-EVP_PKEY *generate_dh_key() {
-    EVP_PKEY *pkey = NULL;
-    DH *dh = NULL;
+EVP_PKEY *generate_dh_key(const char *param_file) {
+  EVP_PKEY *pkey = NULL;
+  DH *dh_params = NULL;
+  BIO *bio = NULL;
 
-    // 1) Tạo DH với độ dài 2048 bits và generator 2
-    dh = DH_new();
-    if (!dh) return NULL;
+  // 1) Đọc tham số DH (p, g) từ file PEM
+  bio = BIO_new_file(param_file, "r");
+  if (!bio) {
+      fprintf(stderr, "Error: Could not open DH parameters file %s\n", param_file);
+      return NULL;
+  }
 
-    if (DH_generate_parameters_ex(dh, 2048, DH_GENERATOR_2, NULL) != 1) {
-        DH_free(dh);
-        return NULL;
-    }
+  // Đọc cấu trúc DH* từ file PEM
+  dh_params = PEM_read_bio_DHparams(bio, NULL, NULL, NULL);
+  BIO_free(bio); // Giải phóng BIO
 
-    // 2) Tạo EVP_PKEY từ DH
-    pkey = EVP_PKEY_new();
-    if (!pkey) {
-        DH_free(dh);
-        return NULL;
-    }
+  if (!dh_params) {
+      fprintf(stderr, "Error: Could not read DH parameters from file\n");
+      return NULL;
+  }
 
-    if (EVP_PKEY_assign_DH(pkey, dh) != 1) {
-        DH_free(dh);
-        EVP_PKEY_free(pkey);
-        return NULL;
-    }
-    // Lưu ý: pkey giờ quản lý dh, không cần free dh nữa
+  // 2) Tạo EVP_PKEY để chứa các tham số (p, g) này
+  pkey = EVP_PKEY_new();
+  if (!pkey) {
+      DH_free(dh_params);
+      return NULL;
+  }
 
-    // 3) Tạo keypair (public/private) cho DH
-    EVP_PKEY_CTX *kctx = EVP_PKEY_CTX_new(pkey, NULL);
-    if (!kctx) {
-        EVP_PKEY_free(pkey);
-        return NULL;
-    }
+  // Gán tham số DH đã đọc vào EVP_PKEY. pkey giờ quản lý dh_params
+  if (EVP_PKEY_assign_DH(pkey, dh_params) != 1) {
+      // Nếu thất bại, dh_params không được quản lý bởi pkey, cần free
+      DH_free(dh_params);
+      EVP_PKEY_free(pkey);
+      return NULL;
+  }
 
-    if (EVP_PKEY_keygen_init(kctx) <= 0) {
-        EVP_PKEY_CTX_free(kctx);
-        EVP_PKEY_free(pkey);
-        return NULL;
-    }
+  // 3) Tạo context để sinh cặp khóa (private/public) DH
+  EVP_PKEY_CTX *kctx = EVP_PKEY_CTX_new(pkey, NULL);
+  if (!kctx) {
+      EVP_PKEY_free(pkey);
+      return NULL;
+  }
 
-    EVP_PKEY *dh_key = NULL;
-    if (EVP_PKEY_keygen(kctx, &dh_key) <= 0) {
-        EVP_PKEY_CTX_free(kctx);
-        EVP_PKEY_free(pkey);
-        return NULL;
-    }
+  if (EVP_PKEY_keygen_init(kctx) <= 0) {
+      EVP_PKEY_CTX_free(kctx);
+      EVP_PKEY_free(pkey);
+      return NULL;
+  }
 
-    EVP_PKEY_free(pkey);
-    EVP_PKEY_CTX_free(kctx);
-    return dh_key;
+  EVP_PKEY *dh_key = NULL;
+  // Sinh khóa riêng/công khai DH dựa trên P và G đã load
+  if (EVP_PKEY_keygen(kctx, &dh_key) <= 0) {
+      EVP_PKEY_CTX_free(kctx);
+      EVP_PKEY_free(pkey);
+      return NULL;
+  }
+
+  EVP_PKEY_free(pkey); // Giải phóng EVP_PKEY chỉ chứa tham số DH
+  EVP_PKEY_CTX_free(kctx);
+
+  // dh_key là EVP_PKEY chứa keypair hoàn chỉnh và tham số (p, g)
+  return dh_key;
 }
 
-
-EVP_PKEY *generate_dsa_key() {
-    EVP_PKEY *params = NULL;
-    EVP_PKEY *pkey = NULL;
-    EVP_PKEY_CTX *pctx = NULL;
-    EVP_PKEY_CTX *kctx = NULL;
-
-    // 1) Tạo context sinh parameters DSA
-    pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_DSA, NULL);
-    if (!pctx) return NULL;
-
-    if (EVP_PKEY_paramgen_init(pctx) <= 0) goto err;
-
-    // Thiết lập độ dài DSA (2048 bits)
-    if (EVP_PKEY_CTX_set_dsa_paramgen_bits(pctx, 2048) <= 0) goto err;
-
-    // Sinh parameters (p, q, g)
-    if (EVP_PKEY_paramgen(pctx, &params) <= 0) goto err;
-
-    // 2) Tạo context sinh key dựa trên parameters
-    kctx = EVP_PKEY_CTX_new(params, NULL);
-    if (!kctx) goto err;
-
-    if (EVP_PKEY_keygen_init(kctx) <= 0) goto err;
-
-    // 3) Sinh keypair
-    if (EVP_PKEY_keygen(kctx, &pkey) <= 0) goto err;
-
-    EVP_PKEY_free(params);
-    EVP_PKEY_CTX_free(pctx);
-    EVP_PKEY_CTX_free(kctx);
+EVP_PKEY *load_dsa_private(const char *filename) {
+    FILE *f = fopen(filename, "r");
+    if (!f) return NULL;
+    EVP_PKEY *pkey = PEM_read_PrivateKey(f, NULL, NULL, NULL);
+    fclose(f);
     return pkey;
+}
 
-err:
-    EVP_PKEY_free(params);
-    EVP_PKEY_CTX_free(pctx);
-    EVP_PKEY_CTX_free(kctx);
-    return NULL;
+EVP_PKEY *load_dsa_public(const char *filename) {
+    FILE *f = fopen(filename, "r");
+    if (!f) return NULL;
+    EVP_PKEY *pkey = PEM_read_PUBKEY(f, NULL, NULL, NULL);
+    fclose(f);
+    return pkey;
 }
 
 unsigned char *dsa_sign(EVP_PKEY *priv, const unsigned char *msg, size_t msglen, size_t *siglen) {
@@ -171,9 +159,15 @@ int dsa_verify(EVP_PKEY *pub, const unsigned char *msg, size_t msglen,
     if (!ctx) return 0;
 
     // MUST specify SHA256 for DSA verify
+    if (!pub) {
+    printf("Public key NULL!!!\n");
+    return 0;
+    }
+
+    printf("Type key: %d\n", EVP_PKEY_base_id(pub));
     if (EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, pub) <= 0)
         goto end;
-
+    printf("123\n");
     if (EVP_DigestVerify(ctx, sig, siglen, msg, msglen) == 1)
         ok = 1;   // OK
 
@@ -306,6 +300,23 @@ cleanup:
     return ret;
 }
 
+void dump_hex(const char *label, const unsigned char *buf, size_t len, size_t show) {
+    fprintf(stderr, "%s (%zu bytes):", label, len);
+    size_t n = (show && show < len) ? show : len;
+    for (size_t i = 0; i < n; ++i) fprintf(stderr, "%02X", buf[i]);
+    if (n < len) fprintf(stderr, "...");
+    fprintf(stderr, "\n");
+}
+
+void print_sha256(const char *label, const unsigned char *buf, size_t len) {
+    unsigned char dgst[32];
+    if (EVP_Digest(buf, len, dgst, NULL, EVP_sha256(), NULL)) {
+        fprintf(stderr, "%s sha256: ", label);
+        for (int i = 0; i < 8; ++i) fprintf(stderr, "%02X", dgst[i]); // 8 bytes fingerprint
+        fprintf(stderr, "...\n");
+    }
+}
+
 int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer_sig_pub, unsigned char *aes_key_out) {
     int ok = 0;
     unsigned char *kx_pub_der = NULL, *sig_of_kx = NULL;
@@ -323,39 +334,62 @@ int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer
     sig_of_kx = dsa_sign(sig_priv, kx_pub_der, kx_pub_len, &sig_of_kx_len);
     if (!sig_of_kx) goto cleanup;
 
-    // 3) Send: [kx_pub][signature]
+    // 3) Log local key
+    fprintf(stderr, "[LOCAL] DH public key length: %d\n", kx_pub_len);
+    int head_len = kx_pub_len < 64 ? kx_pub_len : 64;
+    int tail_len = head_len;
+    dump_hex("[LOCAL] DH HEAD", kx_pub_der, head_len, head_len);
+    dump_hex("[LOCAL] DH TAIL", kx_pub_der + kx_pub_len - tail_len, tail_len, tail_len);
+    print_sha256("[LOCAL] DH SHA256", kx_pub_der, kx_pub_len);
+    print_sha256("[LOCAL] DSA signature", sig_of_kx, sig_of_kx_len);
+
+    // 4) Send: [kx_pub][signature]
     if (send_blob(sock, kx_pub_der, kx_pub_len) < 0) goto cleanup;
     if (sig_of_kx_len > UINT32_MAX || send_blob(sock, sig_of_kx, (uint32_t)sig_of_kx_len) < 0) goto cleanup;
 
-    // 4) Receive peer DH public key
+    // 5) Receive peer DH public key
     if (recv_blob(sock, &kx_pub_peer, &len) < 0 || !kx_pub_peer || len == 0) goto cleanup;
     int peer_kx_len = (int)len;
 
-    // 5) Receive peer signature
+    // 6) Receive peer signature
     if (recv_blob(sock, &sig_of_kx_peer, &len) < 0 || !sig_of_kx_peer) goto cleanup;
     uint32_t sig_of_kx_peer_len = len;
 
-    // 6) Verify peer signature over their DH public key
+    // 7) Log received key
+    fprintf(stderr, "[PEER] DH public key length: %d\n", peer_kx_len);
+    head_len = peer_kx_len < 64 ? peer_kx_len : 64;
+    tail_len = head_len;
+    dump_hex("[PEER] DH HEAD", kx_pub_peer, head_len, head_len);
+    dump_hex("[PEER] DH TAIL", kx_pub_peer + peer_kx_len - tail_len, tail_len, tail_len);
+    print_sha256("[PEER] DH SHA256", kx_pub_peer, peer_kx_len);
+    print_sha256("[PEER] DSA signature", sig_of_kx_peer, sig_of_kx_peer_len);
+
+    // 8) Verify peer signature over their DH public key
     if (!dsa_verify(peer_sig_pub, kx_pub_peer, peer_kx_len, sig_of_kx_peer, sig_of_kx_peer_len)) {
         fprintf(stderr, "Signature verification failed! Aborting handshake.\n");
         goto cleanup;
     }
 
-    // 7) Reconstruct peer DH public key
+    // 9) Reconstruct peer DH public key
     peer_kx_key = der_to_pubkey(kx_pub_peer, peer_kx_len);
     if (!peer_kx_key) goto cleanup;
 
-    // 8) Derive shared secret
+    // 10) Derive shared secret
     size_t secret_len = 0;
     unsigned char *secret = dh_derive_shared(kx_priv, peer_kx_key, &secret_len);
     if (!secret) goto cleanup;
 
-    // 9) Derive AES-256 key from shared secret
+    // 11) Derive AES-256 key from shared secret
     if (!derive_aes_key(secret, secret_len, aes_key_out)) {
         OPENSSL_free(secret);
         goto cleanup;
     }
     OPENSSL_free(secret);
+
+    // 12) Log AES key
+    fprintf(stderr, "[AES] Derived AES-256 key: ");
+    for (int i = 0; i < 32; i++) fprintf(stderr, "%02X", aes_key_out[i]);
+    fprintf(stderr, "\n");
 
     ok = 1;
 
