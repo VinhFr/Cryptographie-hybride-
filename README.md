@@ -31,3 +31,50 @@ Ce projet implémente une communication sécurisée entre deux appareils (Client
 - Chiffrement des données avant envoi
 
 Format du message :
+
+---
+
+## 🧩 Architecture Fonctionnelle
+
+
+---
+
+## ⚙️ Fonctionnalités
+
+### Cryptographie
+- DH : génération, échange, dérivation
+- DSA : signature, vérification
+- AES-256 : chiffrement/déchiffrement
+- IV aléatoire sécurisé via OpenSSL
+
+### Réseau
+- Connexion TCP (client/serveur)
+- Envoi structuré (IV + bloc AES + signature)
+- Gestion d’erreurs réseau
+
+### Multithreading
+- Un thread pour l’envoi
+- Un thread pour la réception
+- Communication temps réel
+
+### GNU/Linux
+- Compilation via GCC
+- Utilisation d’OpenSSL
+- Gestion via Makefile
+
+---
+
+## 📁 Structure du Projet
+
+
+---
+
+## 🔧 Installation
+
+### Dépendances
+Installer GCC et OpenSSL :
+
+```bash
+sudo apt update
+sudo apt install build-essential libssl-dev
+
