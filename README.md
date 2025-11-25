@@ -122,62 +122,23 @@ sudo apt update
 sudo apt install build-essential libssl-dev
 ```
 
-### Compilation
+### Compilation et Génération des clés
 
+Le Makefile compile le projet et gère automatiquement la génération des clés et paramètres DH(p,g) cryptographiques si nécessaire :
+
+Si dhparams.pem n'existe pas, les paramètres Diffie-Hellman (p,g) 2048 bits sont créés.
 ```bash
 make
 ```
 
-### Génération des clés et paramètres cryptographiques
+Si les clés DSA n'existent pas, elles sont générées automatiquement :
 
-Le Makefile gère automatiquement la génération :
+server_dsa_priv.pem / server_dsa_pub.pem
 
-1. **DH Parameters (dhparams.pem)**
-
-   ```bash
-   ```
-
-make dhparams
-
-````
-   Génère des paramètres Diffie-Hellman 2048 bits si le fichier n'existe pas.
-
-2. **DSA keypairs pour client et serveur**
-   ```bash
+client_dsa_priv.pem / client_dsa_pub.pem
+```bash
 make keys
-````
-
-Génère les paires de clés DSA suivantes :
-
-* `server_dsa_priv.pem` / `server_dsa_pub.pem`
-* `client_dsa_priv.pem` / `client_dsa_pub.pem`
-
-### Nettoyage
-
-```bash
-make clean
 ```
-
-Supprime tous les fichiers objets, l'exécutable et les clés générées.
-
----
-
-## ▶️ Exécution
-
-### Serveur :
-
-```bash
-./e2ee server 127.0.0.1 5000
-```
-
-### Client :
-
-```bash
-./e2ee client 127.0.0.1 5000
-```
-
----
-
 ## 🔄 Fonctionnement des Threads
 
 ### Thread de réception
@@ -208,7 +169,6 @@ Supprime tous les fichiers objets, l'exécutable et les clés générées.
 
 ## 👤 Auteur
 
-Projet réalisé par **TRAN Bui Xuan Vinh**
-Année : **2025–2026**
+Projet réalisé par **TRAN Bui Xuan Vinh**  
+Période : **5/11/2025 → 5/12/2025**
 
----
