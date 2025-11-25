@@ -1,6 +1,5 @@
 # E2EE : Chiffrement & Déchiffrement Sécurisé entre Deux Appareils
 
-
 Basé sur Diffie–Hellman (DH), DSA et AES — utilisant les sockets réseau, le multithreading et les outils GNU/Linux.
 
 ---
@@ -14,7 +13,7 @@ Ce projet implémente une communication sécurisée entre deux appareils (Client
 * AES-256 pour le chiffrement symétrique
 * Sockets TCP pour la communication réseau
 * Threads POSIX pour l’émission et la réception simultanées
-* Outils GNU/Linux et Makefile pour la compilation
+* Outils GNU/Linux et Makefile pour la compilation et la génération automatique de clés
 
 ---
 
@@ -83,6 +82,7 @@ Appareil A                                  Appareil B
 * Compilation via **GCC**
 * Utilisation de la bibliothèque **OpenSSL**
 * Automatisation via **Makefile**
+* Génération automatique de clés DSA et paramètres DH
 
 ---
 
@@ -93,25 +93,19 @@ projet-crypto/
 │
 ├── src/
 │   ├── main.c
+│   ├── crypto.c
 │   ├── network.c
-│   ├── crypto_dh.c
-│   ├── crypto_dsa.c
-│   ├── crypto_aes.c
-│   ├── thread_handler.c
-│   └── utils.c
 │
 ├── include/
+│   ├── crypto.h
 │   ├── network.h
-│   ├── crypto_dh.h
-│   ├── crypto_dsa.h
-│   ├── crypto_aes.h
-│   ├── thread_handler.h
-│   └── utils.h
 │
 ├── keys/
-│   ├── dsa_private.pem
-│   ├── dsa_public.pem
-│   └── dh_params.pem
+│   ├── server_dsa_priv.pem
+│   ├── server_dsa_pub.pem
+│   ├── client_dsa_priv.pem
+│   ├── client_dsa_pub.pem
+│   └── dhparams.pem
 │
 ├── Makefile
 └── README.md
@@ -119,7 +113,7 @@ projet-crypto/
 
 ---
 
-## 🔧 Installation
+## 🔧 Installation et Setup
 
 ### Dépendances
 
@@ -128,19 +122,43 @@ sudo apt update
 sudo apt install build-essential libssl-dev
 ```
 
----
-
-## 🏗️ Compilation
+### Compilation
 
 ```bash
 make
 ```
 
-Nettoyage :
+### Génération des clés et paramètres cryptographiques
+
+Le Makefile gère automatiquement la génération :
+
+1. **DH Parameters (dhparams.pem)**
+
+   ```bash
+   ```
+
+make dhparams
+
+````
+   Génère des paramètres Diffie-Hellman 2048 bits si le fichier n'existe pas.
+
+2. **DSA keypairs pour client et serveur**
+   ```bash
+make keys
+````
+
+Génère les paires de clés DSA suivantes :
+
+* `server_dsa_priv.pem` / `server_dsa_pub.pem`
+* `client_dsa_priv.pem` / `client_dsa_pub.pem`
+
+### Nettoyage
 
 ```bash
 make clean
 ```
+
+Supprime tous les fichiers objets, l'exécutable et les clés générées.
 
 ---
 
@@ -149,13 +167,13 @@ make clean
 ### Serveur :
 
 ```bash
-./crypto_app server 5000
+./e2ee server 127.0.0.1 5000
 ```
 
 ### Client :
 
 ```bash
-./crypto_app client 127.0.0.1 5000
+./e2ee client 127.0.0.1 5000
 ```
 
 ---
@@ -190,11 +208,7 @@ make clean
 
 ## 👤 Auteur
 
-Projet réalisé par **[Votre Nom]**
-Année : **2024–2025**
+Projet réalisé par **TRAN Bui Xuan Vinh**
+Année : **2025–2026**
 
 ---
-
-## 📄 Licence
-
-**MIT License**
