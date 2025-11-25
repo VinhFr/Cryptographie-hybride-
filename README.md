@@ -1,4 +1,5 @@
-# Projet de Chiffrement & Déchiffrement Sécurisé entre Deux Appareils
+# E2EE : Chiffrement & Déchiffrement Sécurisé entre Deux Appareils
+
 
 Basé sur Diffie–Hellman (DH), DSA et AES — utilisant les sockets réseau, le multithreading et les outils GNU/Linux.
 
