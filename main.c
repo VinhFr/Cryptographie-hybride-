@@ -84,19 +84,18 @@ int main(int argc, char **argv) {
     }
 
     OpenSSL_add_all_algorithms();
-    ERR_load_crypto_strings();
 
     const char *mode = argv[1];
     const char *ip = argv[2];
     int port = atoi(argv[3]);
 
-    // 1) Kết nối socket
+    /* Connect socket */
     int sock = (strcmp(mode, "server") == 0) ? start_server(ip, port)
                                              : start_client(ip, port);
     if (sock < 0) return 1;
     printf("Connected.\n");
 
-    // 2) Generate DH key
+    /* Generate DH key */
     EVP_PKEY *kx = generate_dh_key("dhparams.pem");
     if (!kx) {
         fprintf(stderr, "Failed to generate DH key\n");
@@ -104,7 +103,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // 3) Load DSA keys từ file
+    /* Charger DSA keys à file  */
     EVP_PKEY *sig = NULL;
     EVP_PKEY *peer_sig_pub = NULL;
     if (strcmp(mode, "server") == 0) {
@@ -122,7 +121,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // 4) In thông tin DH public key (optional)
+    /* Affichage et sauvegarde de la clé publique DH (optionnel) */
     int publen = 0;
     unsigned char *pubder = pubkey_to_der(kx, &publen);
     if (pubder) {
@@ -130,14 +129,12 @@ int main(int argc, char **argv) {
         dump_hex("[LOCAL] pubder head", pubder, publen < 64 ? publen : 64, 64);
         int tail = publen < 64 ? publen : 64;
         dump_hex("[LOCAL] pubder tail", pubder + publen - tail, tail, tail);
-
-        // ghi ra file để tham khảo
         FILE *f = fopen("last_pub.der", "wb");
         if (f) { fwrite(pubder, 1, publen, f); fclose(f); }
         OPENSSL_free(pubder);
     }
 
-    // 5) Handshake
+    /* Effectue le handshake et échange la clé publique DH */
     unsigned char aes_key[32];
     if (!do_handshake(sock, kx, sig, peer_sig_pub, aes_key)) {
         fprintf(stderr, "Handshake failed\n");
@@ -149,7 +146,7 @@ int main(int argc, char **argv) {
     }
     printf("Handshake done. AES-256 key derived.\n");
 
-    // 6) Start send/receive threads
+    /* Commence à send/receive threads */
     thread_args_t args;
     args.sock = sock;
     memcpy(args.aes_key, aes_key, 32);
@@ -165,11 +162,12 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* Exécution de 2 threads en parallèle (envoi / réception) */
     pthread_join(t2, NULL);
     shutdown(sock, SHUT_WR);
     pthread_join(t1, NULL);
 
-    // 7) Cleanup
+    /* Libération des ressources allouées */
     EVP_PKEY_free(kx);
     EVP_PKEY_free(sig);
     EVP_PKEY_free(peer_sig_pub);
