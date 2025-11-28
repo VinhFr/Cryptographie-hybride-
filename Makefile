@@ -1,4 +1,4 @@
-# Makefile cho project E2EE
+# Makefile pour le project E2EE (End to End Encryption)
 CC = gcc
 CFLAGS = -Wall -Wextra -g -O2 -pthread
 LDFLAGS = -lssl -lcrypto
@@ -26,7 +26,7 @@ $(TARGET): $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# 1. DH parameters (tự động tạo nếu chưa có)
+# 1. DH parameters
 $(DH_PARAMS):
 	@echo "🔑 Generating 2048-bit Diffie-Hellman parameters..."
 	openssl dhparam -out $@ 2048
