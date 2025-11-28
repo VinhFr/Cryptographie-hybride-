@@ -1,29 +1,25 @@
-#include "crypto.h"   // prototypes của các hàm crypto
-#include <openssl/evp.h>
-#include <openssl/rand.h>
-#include <openssl/err.h>
-#include <openssl/dh.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <openssl/pem.h>
-#include <openssl/x509.h>
+#include "crypto.h"
+
+#include <string.h>          // memcpy, strlen
+#include <stdint.h>          // uint32_t (send_blob, recv_blob)
+#include <openssl/rand.h>    // RAND_bytes
+#include <openssl/pem.h>     // PEM_read/write (private/public key)
+#include <openssl/x509.h>    // i2d_PUBKEY, d2i_PUBKEY
+#include <openssl/bio.h>     // BIO_new_file, PEM_read_bio_DHparams
 
 /*
-  Paramètres :
-  pkey : pointeur vers la clé DH générée (clé publique et clé privée)
-  pctx : contexte pour la génération des paramètres DH (p, g)
-  kctx : contexte pour la génération de la clé DH
+  Génère une paire de clés DH à partir d’un fichier de paramètres (p, g).
 
-  Cette fonction génère une paire de clés Diffie-Hellman (DH) traditionnelle :
-  1) Création d'un contexte pour générer les paramètres DH (longueur de la clé par défaut 2048 bits).
-  2) Génération des paramètres DH (nombre premier p et générateur g).
-  3) Création d'un contexte à partir des paramètres générés pour produire la paire de clés.
-  4) Génération effective de la clé privée et publique DH dans pkey.
-  5) Nettoyage des contextes et renvoi de la clé générée ou NULL en cas d'erreur.
+  Étapes :
+    1) Lecture des paramètres DH depuis un fichier PEM.
+    2) Création d’un EVP_PKEY contenant ces paramètres.
+    3) Génération de la clé DH (publique + privée).
 
-  Note : la clé retournée dans pkey contient à la fois la clé privée et la clé publique.
+  Retour :
+    - EVP_PKEY* : clé DH complète
+    - NULL : erreur
 */
+
 EVP_PKEY *generate_dh_key(const char *param_file) {
   EVP_PKEY *pkey = NULL;
   DH *dh_params = NULL;
