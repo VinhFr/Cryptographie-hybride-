@@ -322,15 +322,15 @@ int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer
     uint32_t len = 0;
     EVP_PKEY *peer_kx_key = NULL;
 
-    // 1) Serialize DH public key
+    /* 1) Sérialiser la clé publique DH locale (DER)  */
     kx_pub_der = pubkey_to_der(kx_priv, &kx_pub_len);
     if (!kx_pub_der) goto cleanup;
 
-    // 2) Sign DH public key bytes with DSA
+    /* 2) Signer cette clé DH avec la clé privée DSA*/
     sig_of_kx = dsa_sign(sig_priv, kx_pub_der, kx_pub_len, &sig_of_kx_len);
     if (!sig_of_kx) goto cleanup;
 
-    // 3) Log local key
+    /* 3) Log local key */
     fprintf(stderr, "[LOCAL] DH public key length: %d\n", kx_pub_len);
     int head_len = kx_pub_len < 64 ? kx_pub_len : 64;
     int tail_len = head_len;
@@ -339,19 +339,19 @@ int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer
     print_sha256("[LOCAL] DH SHA256", kx_pub_der, kx_pub_len);
     print_sha256("[LOCAL] DSA signature", sig_of_kx, sig_of_kx_len);
 
-    // 4) Send: [kx_pub][signature]
+    /* 4) Envoyer la clé publique DH et sa signature */
     if (send_blob(sock, kx_pub_der, kx_pub_len) < 0) goto cleanup;
     if (sig_of_kx_len > UINT32_MAX || send_blob(sock, sig_of_kx, (uint32_t)sig_of_kx_len) < 0) goto cleanup;
 
-    // 5) Receive peer DH public key
+    /* 5) Recevoir la clé publique DH du pair */
     if (recv_blob(sock, &kx_pub_peer, &len) < 0 || !kx_pub_peer || len == 0) goto cleanup;
     int peer_kx_len = (int)len;
 
-    // 6) Receive peer signature
+    /* 6) Recevoir la signature DSA de la clé DH du pair */
     if (recv_blob(sock, &sig_of_kx_peer, &len) < 0 || !sig_of_kx_peer) goto cleanup;
     uint32_t sig_of_kx_peer_len = len;
 
-    // 7) Log received key
+    /* 7) Log received key */
     fprintf(stderr, "[PEER] DH public key length: %d\n", peer_kx_len);
     head_len = peer_kx_len < 64 ? peer_kx_len : 64;
     tail_len = head_len;
@@ -360,29 +360,29 @@ int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer
     print_sha256("[PEER] DH SHA256", kx_pub_peer, peer_kx_len);
     print_sha256("[PEER] DSA signature", sig_of_kx_peer, sig_of_kx_peer_len);
 
-    // 8) Verify peer signature over their DH public key
+    /* 8) Vérifier la signature DSA du pair */
     if (!dsa_verify(peer_sig_pub, kx_pub_peer, peer_kx_len, sig_of_kx_peer, sig_of_kx_peer_len)) {
         fprintf(stderr, "Signature verification failed! Aborting handshake.\n");
         goto cleanup;
     }
 
-    // 9) Reconstruct peer DH public key
+    /* 9) Reconstruire la clé DH du pair */
     peer_kx_key = der_to_pubkey(kx_pub_peer, peer_kx_len);
     if (!peer_kx_key) goto cleanup;
 
-    // 10) Derive shared secret
+    /* 10) Calculer le secret partagé DH */
     size_t secret_len = 0;
     unsigned char *secret = dh_derive_shared(kx_priv, peer_kx_key, &secret_len);
     if (!secret) goto cleanup;
 
-    // 11) Derive AES-256 key from shared secret
+    /* 11) Dériver la clé AES-256 à partir du secret DH*/
     if (!derive_aes_key(secret, secret_len, aes_key_out)) {
         OPENSSL_free(secret);
         goto cleanup;
     }
     OPENSSL_free(secret);
 
-    // 12) Log AES key
+    /* 12) Log AES key */
     fprintf(stderr, "[AES] Derived AES-256 key: ");
     for (int i = 0; i < 32; i++) fprintf(stderr, "%02X", aes_key_out[i]);
     fprintf(stderr, "\n");
