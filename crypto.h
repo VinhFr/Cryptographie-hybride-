@@ -50,6 +50,23 @@ unsigned char *pubkey_to_der(EVP_PKEY *pkey, int *out_len);
 /* Reconstruit une clé publique EVP_PKEY à partir d'un buffer DER (binaire). */
 EVP_PKEY *der_to_pubkey(const unsigned char *der, int der_len);
 
+/* ---------- Session key (DH → HKDF → AES-256) ---------- */
+
+/* Dérive une clé AES-256 à partir d'un secret DH via HKDF-SHA256 */
+int generate_session_key(
+    const unsigned char *dh_secret, size_t secret_len,
+    unsigned char *session_key_out, size_t key_len
+);
+
+/* Renouvelle la clé de session (nouvelle DH → nouvelle clé AES) */
+int refresh_session_key(
+    EVP_PKEY *dh_priv, EVP_PKEY *peer_pub,
+    unsigned char *session_key_out
+);
+
+/* Efface une clé de session de la mémoire */
+void clear_session_key(unsigned char *key, size_t len);
+
 /* ---------- AES-256-GCM encrypt/decrypt ----------
  * Renvoie 1 si succès, 0 sinon.
  */
