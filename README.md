@@ -41,6 +41,13 @@ Ce projet implémente une communication sécurisée entre deux appareils (Client
 | IV | Données chiffrées AES | Signature DSA |
 ```
 
+### Clé de session (AES-256)
+
+* Créée automatiquement à chaque nouvelle session
+* N’existe que pour la durée de la session (tempt fixe)
+* Éphémère : elle disparaît à la fin de la session
+* Garantit le Perfect Forward Secrecy (PFS) grâce au renouvellement systématique
+
 ---
 
 ## 🧩 Architecture Fonctionnelle
