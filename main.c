@@ -24,56 +24,131 @@ typedef struct {
 void *recv_loop(void *arg) {
     thread_args_t *t = arg;
     int sock = t->sock;
-    unsigned char key[32]; memcpy(key, t->aes_key, 32);
+
+    /* master key (PRK) từ handshake */
+    unsigned char master[32];
+    memcpy(master, t->aes_key, 32);
+
     while (1) {
-        // receive iv
+        /* 1) receive counter (4 bytes as blob) */
+        unsigned char *cnt_buf = NULL; uint32_t cnt_len;
+        if (recv_blob(sock, &cnt_buf, &cnt_len) < 0) break;
+        if (!cnt_buf || cnt_len != 4) { if (cnt_buf) OPENSSL_free(cnt_buf); break; }
+        uint32_t counter_net;
+        memcpy(&counter_net, cnt_buf, 4);
+        OPENSSL_free(cnt_buf);
+        uint32_t counter = ntohl(counter_net);
+
+        /* 2) receive iv */
         unsigned char *iv = NULL; uint32_t ivlen;
         if (recv_blob(sock, &iv, &ivlen) < 0) break;
-        // receive ct
+
+        /* 3) receive ct */
         unsigned char *ct = NULL; uint32_t ctlen;
         if (recv_blob(sock, &ct, &ctlen) < 0) { if (iv) OPENSSL_free(iv); break; }
-        // receive tag
+
+        /* 4) receive tag */
         unsigned char *tag = NULL; uint32_t taglen;
         if (recv_blob(sock, &tag, &taglen) < 0) { if (iv) OPENSSL_free(iv); if (ct) OPENSSL_free(ct); break; }
 
+        /* 5) derive per-message session key from master + counter */
+        unsigned char session_key[32];
+        if (!refresh_session_key_per_message(master, sizeof(master), session_key, counter)) {
+            fprintf(stderr, "Failed to derive per-message key (recv)\n");
+            if (iv) OPENSSL_free(iv);
+            if (ct) OPENSSL_free(ct);
+            if (tag) OPENSSL_free(tag);
+            break;
+        }
+
+        /* 6) Optional: show session key (debug) */
+        fprintf(stderr, "[SESSION RCV #%u] ", counter);
+        for (int i = 0; i < 32; ++i) fprintf(stderr, "%02X", session_key[i]);
+        fprintf(stderr, "\n");
+
+        /* 7) decrypt using session_key */
         unsigned char *pt = NULL; int ptlen;
-        int ok = aes_gcm_decrypt(key, 32, iv, ivlen, ct, ctlen, tag, taglen, &pt, &ptlen);
+        int ok = aes_gcm_decrypt(session_key, 32, iv, ivlen, ct, ctlen, tag, taglen, &pt, &ptlen);
         if (!ok) {
             fprintf(stderr, "Decryption failed (tag mismatch?)\n");
         } else {
-            // print plaintext
+            /* print plaintext */
             fwrite(pt, 1, ptlen, stdout);
             printf("\n> "); fflush(stdout);
             OPENSSL_free(pt);
         }
-        if (iv) OPENSSL_free(iv);
-        if (ct) OPENSSL_free(ct);
-        if (tag) OPENSSL_free(tag);
+
+        /* 8) cleanup */
+        OPENSSL_free(iv);
+        OPENSSL_free(ct);
+        OPENSSL_free(tag);
+
+        /* wipe session key from memory */
+        OPENSSL_cleanse(session_key, sizeof(session_key));
     }
+
     return NULL;
 }
 
 void *send_loop(void *arg) {
     thread_args_t *t = arg;
     int sock = t->sock;
-    unsigned char key[32]; memcpy(key, t->aes_key, 32);
+
+    /* master key (PRK) từ handshake */
+    unsigned char master[32];
+    memcpy(master, t->aes_key, 32);
+
     char buf[4096];
+    uint32_t counter = 1; /* bắt đầu từ 1 */
+
     while (1) {
         printf("> "); fflush(stdout);
         if (!fgets(buf, sizeof(buf), stdin)) break;
         size_t len = strlen(buf);
         if (len > 0 && buf[len-1] == '\n') buf[len-1] = '\0', len--;
+
+        /* 1) derive per-message session key */
+        unsigned char session_key[32];
+        if (!refresh_session_key_per_message(master, sizeof(master), session_key, counter)) {
+            fprintf(stderr, "Failed to derive per-message key (send)\n");
+            break;
+        }
+
+        /* 2) Optional: show session key (debug) */
+        fprintf(stderr, "[SESSION SND #%u] ", counter);
+        for (int i = 0; i < 32; ++i) fprintf(stderr, "%02X", session_key[i]);
+        fprintf(stderr, "\n");
+
+        /* 3) encrypt with session_key */
         unsigned char *iv = NULL, *ct = NULL, *tag = NULL;
         int ivlen, ctlen, taglen;
-        if (!aes_gcm_encrypt(key, 32, (unsigned char*)buf, (int)len, &iv, &ivlen, &ct, &ctlen, &tag, &taglen)) {
-            fprintf(stderr, "Encryption failed\n"); break;
+        if (!aes_gcm_encrypt(session_key, 32, (unsigned char*)buf, (int)len,
+                             &iv, &ivlen, &ct, &ctlen, &tag, &taglen)) {
+            fprintf(stderr, "Encryption failed\n");
+            OPENSSL_cleanse(session_key, sizeof(session_key));
+            break;
         }
-        // send iv, ct, tag as blobs
-        if (send_blob(sock, iv, ivlen) < 0) { OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag); break; }
-        if (send_blob(sock, ct, ctlen) < 0) { OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag); break; }
-        if (send_blob(sock, tag, taglen) < 0) { OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag); break; }
+
+        /* 4) send counter first (network byte order) as 4-byte blob */
+        uint32_t counter_net = htonl(counter);
+        if (send_blob(sock, (unsigned char*)&counter_net, sizeof(counter_net)) < 0) {
+            OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag);
+            OPENSSL_cleanse(session_key, sizeof(session_key));
+            break;
+        }
+
+        /* 5) send iv, ct, tag */
+        if (send_blob(sock, iv, ivlen) < 0) { OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag); OPENSSL_cleanse(session_key, sizeof(session_key)); break; }
+        if (send_blob(sock, ct, ctlen) < 0) { OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag); OPENSSL_cleanse(session_key, sizeof(session_key)); break; }
+        if (send_blob(sock, tag, taglen) < 0) { OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag); OPENSSL_cleanse(session_key, sizeof(session_key)); break; }
+
         OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag);
+
+        /* 6) wipe session key and increment counter */
+        OPENSSL_cleanse(session_key, sizeof(session_key));
+        counter++;
     }
+
     return NULL;
 }
 

@@ -6,6 +6,7 @@
 #include <openssl/pem.h>     // PEM_read/write (private/public key)
 #include <openssl/x509.h>    // i2d_PUBKEY, d2i_PUBKEY
 #include <openssl/bio.h>     // BIO_new_file, PEM_read_bio_DHparams
+#include <openssl/kdf.h>     // pour HKDF
 
 /*
   Génère une paire de clés DH à partir d’un fichier de paramètres (p, g).
@@ -163,7 +164,6 @@ int dsa_verify(EVP_PKEY *pub, const unsigned char *msg, size_t msglen,
     printf("Type key: %d\n", EVP_PKEY_base_id(pub));
     if (EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, pub) <= 0)
         goto end;
-    printf("123\n");
     if (EVP_DigestVerify(ctx, sig, siglen, msg, msglen) == 1)
         ok = 1;   // OK
 
@@ -211,10 +211,44 @@ err:
     return secret;
 }
 
-int derive_aes_key( const unsigned char *shared, size_t shared_len,unsigned char *out32) {
-    if (!EVP_Digest(shared, shared_len, out32, NULL, EVP_sha256(), NULL))
-        return 0;
+// Dérive une clé de session de 32 octets (AES-256) à partir d'un secret partagé
+int derive_session_key_hkdf(const unsigned char *shared, size_t shared_len, unsigned char *session_key, const unsigned char *salt, size_t salt_len, const unsigned char *info, size_t info_len) {
+    if (!shared || !session_key) return 0;
+
+    EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
+    if (!pctx) return 0;
+
+    if (EVP_PKEY_derive_init(pctx) <= 0) goto err;
+    if (EVP_PKEY_CTX_set_hkdf_md(pctx, EVP_sha256()) <= 0) goto err;
+    if (EVP_PKEY_CTX_set1_hkdf_salt(pctx, salt, (int)salt_len) <= 0) goto err;
+    if (EVP_PKEY_CTX_set1_hkdf_key(pctx, shared, (int)shared_len) <= 0) goto err;
+    if (EVP_PKEY_CTX_add1_hkdf_info(pctx, info, (int)info_len) <= 0) goto err;
+
+    size_t out_len = 32; // AES-256 key
+    if (EVP_PKEY_derive(pctx, session_key, &out_len) <= 0 || out_len != 32) goto err;
+
+    EVP_PKEY_CTX_free(pctx);
     return 1;
+
+err:
+    EVP_PKEY_CTX_free(pctx);
+    return 0;
+}
+
+// Wrapper pratique pour générer une nouvelle clé de session pour chaque message
+int refresh_session_key_per_message(
+    const unsigned char *shared, size_t shared_len,
+    unsigned char *session_key,
+    uint32_t counter
+) {
+    unsigned char info[4];
+    // Stocke le compteur dans un tableau de 4 octets big-endian
+    info[0] = (counter >> 24) & 0xFF;
+    info[1] = (counter >> 16) & 0xFF;
+    info[2] = (counter >> 8) & 0xFF;
+    info[3] = counter & 0xFF;
+
+    return derive_session_key_hkdf(shared, shared_len, session_key, NULL, 0, info, 4);
 }
 
 // AES-GCM encrypt: returns ciphertext (OPENSSL_malloc) with tag appended after ciphertext
@@ -376,10 +410,11 @@ int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer
     if (!secret) goto cleanup;
 
     /* 11) Dériver la clé AES-256 à partir du secret DH*/
-    if (!derive_aes_key(secret, secret_len, aes_key_out)) {
-        OPENSSL_free(secret);
-        goto cleanup;
-    }
+    if (!derive_session_key_hkdf(secret, secret_len, aes_key_out, NULL, 0, NULL, 0)) {
+      OPENSSL_free(secret);
+      goto cleanup;
+}
+
     OPENSSL_free(secret);
 
     /* 12) Log AES key */
