@@ -1,6 +1,6 @@
 # E2EE : Chiffrement & Déchiffrement Sécurisé entre Deux Appareils
 
-Basé sur Diffie–Hellman (DH), DSA et AES — utilisant les sockets réseau, le multithreading et les outils GNU/Linux.
+Basé sur Diffie–Hellman (DH), DSA, HKDF et AES — utilisant les sockets réseau TCP, le multithreading et les outils GNU/Linux.
 
 ---
 
@@ -10,7 +10,8 @@ Ce projet implémente une communication sécurisée entre deux appareils (Client
 
 * Diffie–Hellman (DH) pour l’échange de clé
 * Digital Signature Algorithm (DSA) pour la signature et la vérification
-* AES-256 pour le chiffrement symétrique
+* HKDF-SHA256 pour la dérivation et le renouvellement sécurisé des clés AES 
+* AES-256 pour le chiffrement symétrique (GCM -Galois counter mode)
 * Sockets TCP pour la communication réseau
 * Threads POSIX pour l’émission et la réception simultanées
 * Outils GNU/Linux et Makefile pour la compilation et la génération automatique de clés
@@ -38,7 +39,7 @@ Ce projet implémente une communication sécurisée entre deux appareils (Client
 * Format d’un paquet transmis :
 
 ```
-| IV | Données chiffrées AES | Signature DSA |
+| IV | Données chiffrées AES |
 ```
 
 ### Clé de session (AES-256)
@@ -53,12 +54,14 @@ Ce projet implémente une communication sécurisée entre deux appareils (Client
 ## 🧩 Architecture Fonctionnelle
 
 ```
-Appareil A                                  Appareil B
---------------------------------------------------------------
-1. Échange des clés DH --------------------> Clé secrète partagée
-2. Échange des clés DSA -------------------> Authentification
-3. Envoi message chiffré + signé ---------->
-4. Déchiffrement + vérification <-----------
+	 Appareil A (client)                         	           Appareil B (server)
+	 ------------------------------------------------------------------------
+Etape 1:		 Échange de clé publique DH + signature 
+Etape 2:    		 Vérification de la signature
+Etape 3: 		 Dérivation du secret partagé (shared key)
+Etape 4:		 Génération d'une clé AES de session pour chaque message    
+Etape 5: Envoi de message chiffré AES-GCM      <------------------> Envoi de message chiffré AES-GCM
+Etape 6: Déchiffrement et affichage du message <------------------> Déchiffrement et affichage du message
 ```
 
 ---
@@ -70,7 +73,7 @@ Appareil A                                  Appareil B
 * Diffie–Hellman : génération, échange et dérivation
 * DSA : signature / vérification
 * AES-256 : chiffrement / déchiffrement
-* IV sécurisé généré via OpenSSL
+* HKDF : dérivation de la clé AES à partir du secret partagé DH et renouvellement pour chaque message
 
 ### Réseau
 
@@ -167,10 +170,11 @@ make keys
 
 ## 🛡️ Sécurité
 
-* Clé AES jamais transmise (issue de DH)
+* Clé AES jamais transmise (dérivée du secret DH)
 * Signatures DSA empêchant les attaques MITM
-* IV unique par paquet
+* IV unique par paquet (Authenticité)
 * Vérification stricte du padding et de la signature
+* Nouvelle clé AES dérivée par HKDF pour chaque message (Perfect Forward Secrecy, PFS)
 
 ---
 
