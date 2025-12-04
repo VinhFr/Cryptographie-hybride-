@@ -14,7 +14,7 @@
 #include "crypto.h"
 #include "network.h"
 
-// ---------- Chat threads ----------
+// ---------- Threads de communication (envoi / réception) ----------
 
 typedef struct {
     int sock;
@@ -25,12 +25,12 @@ void *recv_loop(void *arg) {
     thread_args_t *t = arg;
     int sock = t->sock;
 
-    /* master key (PRK) từ handshake */
+    /* clé maître (PRK) issue du handshake */
     unsigned char master[32];
     memcpy(master, t->aes_key, 32);
 
     while (1) {
-        /* 1) receive counter (4 bytes as blob) */
+        /* 1) recevoir le compteur (4 octets) */
         unsigned char *cnt_buf = NULL; uint32_t cnt_len;
         if (recv_blob(sock, &cnt_buf, &cnt_len) < 0) break;
         if (!cnt_buf || cnt_len != 4) { if (cnt_buf) OPENSSL_free(cnt_buf); break; }
@@ -39,19 +39,19 @@ void *recv_loop(void *arg) {
         OPENSSL_free(cnt_buf);
         uint32_t counter = ntohl(counter_net);
 
-        /* 2) receive iv */
+        /* 2) recevoir l'IV */
         unsigned char *iv = NULL; uint32_t ivlen;
         if (recv_blob(sock, &iv, &ivlen) < 0) break;
 
-        /* 3) receive ct */
+        /* 3) recevoir le ciphertext */
         unsigned char *ct = NULL; uint32_t ctlen;
         if (recv_blob(sock, &ct, &ctlen) < 0) { if (iv) OPENSSL_free(iv); break; }
 
-        /* 4) receive tag */
+        /* 4) recevoir le tag */
         unsigned char *tag = NULL; uint32_t taglen;
         if (recv_blob(sock, &tag, &taglen) < 0) { if (iv) OPENSSL_free(iv); if (ct) OPENSSL_free(ct); break; }
 
-        /* 5) derive per-message session key from master + counter */
+        /* 5) dériver la clé de session par-message à partir de la clé maître + compteur */
         unsigned char session_key[32];
         if (!refresh_session_key_per_message(master, sizeof(master), session_key, counter)) {
             fprintf(stderr, "Failed to derive per-message key (recv)\n");
@@ -61,29 +61,29 @@ void *recv_loop(void *arg) {
             break;
         }
 
-        /* 6) Optional: show session key (debug) */
+        /* 6) Optionnel : afficher la clé de session (debug) */
         fprintf(stderr, "[SESSION RCV #%u] ", counter);
         for (int i = 0; i < 32; ++i) fprintf(stderr, "%02X", session_key[i]);
         fprintf(stderr, "\n");
 
-        /* 7) decrypt using session_key */
+        /* 7) déchiffrer avec session_key */
         unsigned char *pt = NULL; int ptlen;
         int ok = aes_gcm_decrypt(session_key, 32, iv, ivlen, ct, ctlen, tag, taglen, &pt, &ptlen);
         if (!ok) {
             fprintf(stderr, "Decryption failed (tag mismatch?)\n");
         } else {
-            /* print plaintext */
+            /* afficher le texte clair */
             fwrite(pt, 1, ptlen, stdout);
             printf("\n> "); fflush(stdout);
             OPENSSL_free(pt);
         }
 
-        /* 8) cleanup */
+        /* 8) nettoyage des buffers reçus */
         OPENSSL_free(iv);
         OPENSSL_free(ct);
         OPENSSL_free(tag);
 
-        /* wipe session key from memory */
+        /* effacer la clé de session de la mémoire */
         OPENSSL_cleanse(session_key, sizeof(session_key));
     }
 
@@ -94,12 +94,12 @@ void *send_loop(void *arg) {
     thread_args_t *t = arg;
     int sock = t->sock;
 
-    /* master key (PRK) từ handshake */
+    /* clé maître (PRK) issue du handshake */
     unsigned char master[32];
     memcpy(master, t->aes_key, 32);
 
     char buf[4096];
-    uint32_t counter = 1; /* bắt đầu từ 1 */
+    uint32_t counter = 1; /* commence à 1 */
 
     while (1) {
         printf("> "); fflush(stdout);
@@ -107,19 +107,19 @@ void *send_loop(void *arg) {
         size_t len = strlen(buf);
         if (len > 0 && buf[len-1] == '\n') buf[len-1] = '\0', len--;
 
-        /* 1) derive per-message session key */
+        /* 1) dériver la clé de session par-message */
         unsigned char session_key[32];
         if (!refresh_session_key_per_message(master, sizeof(master), session_key, counter)) {
             fprintf(stderr, "Failed to derive per-message key (send)\n");
             break;
         }
 
-        /* 2) Optional: show session key (debug) */
+        /* 2) Optionnel : afficher la clé de session (debug) */
         fprintf(stderr, "[SESSION SND #%u] ", counter);
         for (int i = 0; i < 32; ++i) fprintf(stderr, "%02X", session_key[i]);
         fprintf(stderr, "\n");
 
-        /* 3) encrypt with session_key */
+        /* 3) chiffrer avec session_key */
         unsigned char *iv = NULL, *ct = NULL, *tag = NULL;
         int ivlen, ctlen, taglen;
         if (!aes_gcm_encrypt(session_key, 32, (unsigned char*)buf, (int)len,
@@ -129,7 +129,7 @@ void *send_loop(void *arg) {
             break;
         }
 
-        /* 4) send counter first (network byte order) as 4-byte blob */
+        /* 4) envoyer d'abord le compteur (ordre réseau) sur 4 octets */
         uint32_t counter_net = htonl(counter);
         if (send_blob(sock, (unsigned char*)&counter_net, sizeof(counter_net)) < 0) {
             OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag);
@@ -137,14 +137,14 @@ void *send_loop(void *arg) {
             break;
         }
 
-        /* 5) send iv, ct, tag */
+        /* 5) envoyer iv, ct, tag */
         if (send_blob(sock, iv, ivlen) < 0) { OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag); OPENSSL_cleanse(session_key, sizeof(session_key)); break; }
         if (send_blob(sock, ct, ctlen) < 0) { OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag); OPENSSL_cleanse(session_key, sizeof(session_key)); break; }
         if (send_blob(sock, tag, taglen) < 0) { OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag); OPENSSL_cleanse(session_key, sizeof(session_key)); break; }
 
         OPENSSL_free(iv); OPENSSL_free(ct); OPENSSL_free(tag);
 
-        /* 6) wipe session key and increment counter */
+        /* 6) effacer la clé de session et incrémenter le compteur */
         OPENSSL_cleanse(session_key, sizeof(session_key));
         counter++;
     }
@@ -164,13 +164,13 @@ int main(int argc, char **argv) {
     const char *ip = argv[2];
     int port = atoi(argv[3]);
 
-    /* Connect socket */
+    /* Connexion socket */
     int sock = (strcmp(mode, "server") == 0) ? start_server(ip, port)
                                              : start_client(ip, port);
     if (sock < 0) return 1;
     printf("Connected.\n");
 
-    /* Generate DH key */
+    /* Générer la clé DH */
     EVP_PKEY *kx = generate_dh_key("dhparams.pem");
     if (!kx) {
         fprintf(stderr, "Failed to generate DH key\n");
@@ -178,7 +178,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Charger DSA keys à file  */
+    /* Charger les clés DSA depuis des fichiers */
     EVP_PKEY *sig = NULL;
     EVP_PKEY *peer_sig_pub = NULL;
     if (strcmp(mode, "server") == 0) {
@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
         OPENSSL_free(pubder);
     }
 
-    /* Effectue le handshake et échange la clé publique DH */
+    /* Effectuer le handshake et échanger la clé publique DH */
     unsigned char aes_key[32];
     if (!do_handshake(sock, kx, sig, peer_sig_pub, aes_key)) {
         fprintf(stderr, "Handshake failed\n");
@@ -221,7 +221,7 @@ int main(int argc, char **argv) {
     }
     printf("Handshake done. AES-256 key derived.\n");
 
-    /* Commence à send/receive threads */
+    /* Lancer les threads d'envoi / réception */
     thread_args_t args;
     args.sock = sock;
     memcpy(args.aes_key, aes_key, 32);

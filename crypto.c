@@ -26,38 +26,38 @@ EVP_PKEY *generate_dh_key(const char *param_file) {
   DH *dh_params = NULL;
   BIO *bio = NULL;
 
-  // 1) Đọc tham số DH (p, g) từ file PEM
+  /* 1) Ouvrir le fichier de paramètres DH */
   bio = BIO_new_file(param_file, "r");
   if (!bio) {
-      fprintf(stderr, "Error: Could not open DH parameters file %s\n", param_file);
+      fprintf(stderr, "Erreur : impossible d'ouvrir le fichier de paramètres DH %s\n", param_file);
       return NULL;
   }
 
-  // Đọc cấu trúc DH* từ file PEM
+  /* 2) Lire la structure DH* depuis le PEM */
   dh_params = PEM_read_bio_DHparams(bio, NULL, NULL, NULL);
-  BIO_free(bio); // Giải phóng BIO
+  BIO_free(bio); // libération du BIO
 
   if (!dh_params) {
-      fprintf(stderr, "Error: Could not read DH parameters from file\n");
+      fprintf(stderr, "Erreur : impossible de lire les paramètres DH depuis le fichier\n");
       return NULL;
   }
 
-  // 2) Tạo EVP_PKEY để chứa các tham số (p, g) này
+  /* 3) Créer un EVP_PKEY pour contenir les paramètres (p,g) */
   pkey = EVP_PKEY_new();
   if (!pkey) {
       DH_free(dh_params);
       return NULL;
   }
 
-  // Gán tham số DH đã đọc vào EVP_PKEY. pkey giờ quản lý dh_params
+  /* 4) Assigner les paramètres DH à l'EVP_PKEY (pkey prend la propriété de dh_params) */
   if (EVP_PKEY_assign_DH(pkey, dh_params) != 1) {
-      // Nếu thất bại, dh_params không được quản lý bởi pkey, cần free
+      /* si échec, dh_params n'est pas pris en charge -> free */
       DH_free(dh_params);
       EVP_PKEY_free(pkey);
       return NULL;
   }
 
-  // 3) Tạo context để sinh cặp khóa (private/public) DH
+  /* 5) Initialiser le contexte pour générer la paire de clés */
   EVP_PKEY_CTX *kctx = EVP_PKEY_CTX_new(pkey, NULL);
   if (!kctx) {
       EVP_PKEY_free(pkey);
@@ -71,20 +71,22 @@ EVP_PKEY *generate_dh_key(const char *param_file) {
   }
 
   EVP_PKEY *dh_key = NULL;
-  // Sinh khóa riêng/công khai DH dựa trên P và G đã load
+  /* Génération de la paire (priv/pub) basée sur les paramètres chargés */
   if (EVP_PKEY_keygen(kctx, &dh_key) <= 0) {
       EVP_PKEY_CTX_free(kctx);
       EVP_PKEY_free(pkey);
       return NULL;
   }
 
-  EVP_PKEY_free(pkey); // Giải phóng EVP_PKEY chỉ chứa tham số DH
+  /* on n'a plus besoin de l'objet contenant seulement les paramètres */
+  EVP_PKEY_free(pkey);
   EVP_PKEY_CTX_free(kctx);
 
-  // dh_key là EVP_PKEY chứa keypair hoàn chỉnh và tham số (p, g)
+  /* dh_key contient maintenant la paire complète et les paramètres (p,g) */
   return dh_key;
 }
 
+/* Chargement d'une clé privée DSA depuis un fichier PEM */
 EVP_PKEY *load_dsa_private(const char *filename) {
     FILE *f = fopen(filename, "r");
     if (!f) return NULL;
@@ -93,6 +95,7 @@ EVP_PKEY *load_dsa_private(const char *filename) {
     return pkey;
 }
 
+/* Chargement d'une clé publique DSA depuis un fichier PEM */
 EVP_PKEY *load_dsa_public(const char *filename) {
     FILE *f = fopen(filename, "r");
     if (!f) return NULL;
@@ -101,24 +104,29 @@ EVP_PKEY *load_dsa_public(const char *filename) {
     return pkey;
 }
 
+/*
+  Signature DSA (avec SHA-256).
+  Renvoie un buffer alloué (OPENSSL_malloc) contenant la signature et met à jour siglen.
+  NULL en cas d'erreur.
+*/
 unsigned char *dsa_sign(EVP_PKEY *priv, const unsigned char *msg, size_t msglen, size_t *siglen) {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     unsigned char *sig = NULL;
     size_t slen = 0;
     if (!ctx) return NULL;
 
-    // MUST specify SHA256 for DSA
+    /* On spécifie SHA256 pour DSA */
     if (EVP_DigestSignInit(ctx, NULL, EVP_sha256(), NULL, priv) <= 0)
         goto err;
 
-    // Lấy độ dài chữ ký cần thiết
+    /* déterminer la taille nécessaire pour la signature */
     if (EVP_DigestSign(ctx, NULL, &slen, msg, msglen) <= 0)
         goto err;
 
     sig = OPENSSL_malloc(slen);
     if (!sig) goto err;
 
-    // Ký số thật
+    /* calcul réel de la signature */
     if (EVP_DigestSign(ctx, sig, &slen, msg, msglen) <= 0) {
         OPENSSL_free(sig);
         sig = NULL;
@@ -132,7 +140,7 @@ err:
     return sig;
 }
 
-// serialize public key to DER (i2d)
+/* Sérialise une clé publique en DER (i2d_PUBKEY) */
 unsigned char *pubkey_to_der(EVP_PKEY *pkey, int *out_len) {
     unsigned char *der = NULL;
     int len = i2d_PUBKEY(pkey, &der);
@@ -141,12 +149,13 @@ unsigned char *pubkey_to_der(EVP_PKEY *pkey, int *out_len) {
     return der;
 }
 
-// load public key from DER
+/* Désérialise une clé publique depuis DER */
 EVP_PKEY *der_to_pubkey(const unsigned char *der, int der_len) {
     const unsigned char *p = der;
     return d2i_PUBKEY(NULL, &p, der_len);
 }
 
+/* Vérification DSA (SHA-256). Retourne 1 si OK, 0 sinon. */
 int dsa_verify(EVP_PKEY *pub, const unsigned char *msg, size_t msglen,
                const unsigned char *sig, size_t siglen) {
 
@@ -155,49 +164,49 @@ int dsa_verify(EVP_PKEY *pub, const unsigned char *msg, size_t msglen,
 
     if (!ctx) return 0;
 
-    // MUST specify SHA256 for DSA verify
     if (!pub) {
-    printf("Public key NULL!!!\n");
-    return 0;
+        fprintf(stderr, "Clé publique NULL !\n");
+        return 0;
     }
 
-    printf("Type key: %d\n", EVP_PKEY_base_id(pub));
+    fprintf(stderr, "Type de clé: %d\n", EVP_PKEY_base_id(pub));
     if (EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, pub) <= 0)
         goto end;
     if (EVP_DigestVerify(ctx, sig, siglen, msg, msglen) == 1)
-        ok = 1;   // OK
+        ok = 1;   // signature valide
 
 end:
     EVP_MD_CTX_free(ctx);
     return ok;
 }
 
-// derive shared secret using classic DH
-// hàm này dùng để tạo share-secret-key chung giữa 2 thiết bị.
-// nhận vào publickey của đối tác và private key của mình để tính
+/*
+  Dérive le secret partagé (classic DH) :
+  Entrées : clé privée locale (EVP_PKEY) et clé publique du pair (EVP_PKEY).
+  Renvoie un buffer (OPENSSL_malloc) contenant le secret et met à jour secret_len.
+  NULL en cas d'erreur.
+*/
 unsigned char *dh_derive_shared(EVP_PKEY *priv, EVP_PKEY *peer_pub, size_t *secret_len) {
     EVP_PKEY_CTX *ctx = NULL;
     unsigned char *secret = NULL;
     size_t slen = 0;
 
-    // Context dựa trên private key DH của mình
+    /* Context basé sur la clé privée locale */
     ctx = EVP_PKEY_CTX_new(priv, NULL);
     if (!ctx) return NULL;
 
-    // Khởi tạo quá trình derive (tính shared secret)
     if (EVP_PKEY_derive_init(ctx) <= 0) goto err;
 
-    // Gán public key của peer (đối tác)
+    /* associer la clé publique du pair */
     if (EVP_PKEY_derive_set_peer(ctx, peer_pub) <= 0) goto err;
 
-    // Lấy độ dài của shared secret
+    /* déterminer la longueur du secret partagé */
     if (EVP_PKEY_derive(ctx, NULL, &slen) <= 0) goto err;
 
-    // Cấp phát bộ nhớ để chứa shared secret
     secret = OPENSSL_malloc(slen);
     if (!secret) goto err;
 
-    // Derive thực tế: tạo ra shared secret
+    /* dérivation effective */
     if (EVP_PKEY_derive(ctx, secret, &slen) <= 0) {
         OPENSSL_free(secret);
         secret = NULL;
@@ -211,7 +220,18 @@ err:
     return secret;
 }
 
-// Dérive une clé de session de 32 octets (AES-256) à partir d'un secret partagé
+/*
+  Dérive une clé de session AES-256 (32 octets) à partir d'un secret partagé
+  en utilisant HKDF (SHA-256).
+
+  Paramètres :
+    - shared/shared_len : secret d'entrée
+    - session_key : buffer de sortie (doit avoir au moins 32 octets)
+    - salt/salt_len : sel (peut être NULL/0)
+    - info/info_len : information contextuelle (peut être NULL/0)
+
+  Retour : 1 = succès, 0 = échec
+*/
 int derive_session_key_hkdf(const unsigned char *shared, size_t shared_len, unsigned char *session_key, const unsigned char *salt, size_t salt_len, const unsigned char *info, size_t info_len) {
     if (!shared || !session_key) return 0;
 
@@ -224,7 +244,7 @@ int derive_session_key_hkdf(const unsigned char *shared, size_t shared_len, unsi
     if (EVP_PKEY_CTX_set1_hkdf_key(pctx, shared, (int)shared_len) <= 0) goto err;
     if (EVP_PKEY_CTX_add1_hkdf_info(pctx, info, (int)info_len) <= 0) goto err;
 
-    size_t out_len = 32; // AES-256 key
+    size_t out_len = 32; // longueur souhaitée (AES-256)
     if (EVP_PKEY_derive(pctx, session_key, &out_len) <= 0 || out_len != 32) goto err;
 
     EVP_PKEY_CTX_free(pctx);
@@ -235,14 +255,17 @@ err:
     return 0;
 }
 
-// Wrapper pratique pour générer une nouvelle clé de session pour chaque message
+/*
+  Wrapper pratique pour dériver une nouvelle clé de session par message
+  en incorporant un compteur (big-endian) dans le paramètre "info".
+*/
 int refresh_session_key_per_message(
     const unsigned char *shared, size_t shared_len,
     unsigned char *session_key,
     uint32_t counter
 ) {
     unsigned char info[4];
-    // Stocke le compteur dans un tableau de 4 octets big-endian
+    /* stocke le compteur en big-endian */
     info[0] = (counter >> 24) & 0xFF;
     info[1] = (counter >> 16) & 0xFF;
     info[2] = (counter >> 8) & 0xFF;
@@ -251,9 +274,14 @@ int refresh_session_key_per_message(
     return derive_session_key_hkdf(shared, shared_len, session_key, NULL, 0, info, 4);
 }
 
-// AES-GCM encrypt: returns ciphertext (OPENSSL_malloc) with tag appended after ciphertext
-// out: ct = malloc(ivlen + ctlen + taglen) ??? We'll send iv (12 bytes) separately then ct and tag separately.
-// Simpler: encrypt and return ct and tag buffers separately.
+/*
+  AES-GCM encryption :
+  - Génère un IV aléatoire (12 octets)
+  - Alloue et renvoie le ciphertext et le tag séparément
+
+  Sortie : *out_iv (IV), *out_ct (ciphertext), *out_tag (tag)
+  Les buffers sont alloués via OPENSSL_malloc et doivent être libérés par l'appelant.
+*/
 int aes_gcm_encrypt(const unsigned char *key, int keylen, const unsigned char *plaintext, int ptlen, unsigned char **out_iv, int *iv_len, unsigned char **out_ct, int *ct_len, unsigned char **out_tag, int *tag_len) {
     EVP_CIPHER_CTX *ctx = NULL;
     unsigned char *iv = NULL, *ct = NULL, *tag = NULL;
@@ -288,7 +316,7 @@ int aes_gcm_encrypt(const unsigned char *key, int keylen, const unsigned char *p
     *out_iv = iv; *iv_len = 12;
     *out_ct = ct; *ct_len = flen;
     *out_tag = tag; *tag_len = tlen;
-    iv = ct = tag = NULL; // handed off
+    iv = ct = tag = NULL; // transfert de propriété
     ret = 1;
 cleanup:
     if (iv) OPENSSL_free(iv);
@@ -298,7 +326,10 @@ cleanup:
     return ret;
 }
 
-// AES-GCM decrypt; returns plaintext allocated by OPENSSL_malloc
+/*
+  AES-GCM decryption : renvoie le plaintext (OPENSSL_malloc) sur succès.
+  Vérifie le tag ; si échec, retourne 0.
+*/
 int aes_gcm_decrypt( const unsigned char *key, int keylen, const unsigned char *iv, int ivlen,const unsigned char *ct, int ctlen,const unsigned char *tag, int taglen, unsigned char **out_plain, int *out_len) {
     EVP_CIPHER_CTX *ctx = NULL;
     unsigned char *pt = NULL;
@@ -318,7 +349,7 @@ int aes_gcm_decrypt( const unsigned char *key, int keylen, const unsigned char *
     flen = len;
 
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, taglen, (void *)tag) != 1) goto cleanup;
-    if (EVP_DecryptFinal_ex(ctx, pt + len, &len) != 1) goto cleanup; // will fail if tag mismatch
+    if (EVP_DecryptFinal_ex(ctx, pt + len, &len) != 1) goto cleanup; // échec si tag invalide
     flen += len;
 
     *out_plain = pt; *out_len = flen;
@@ -330,6 +361,7 @@ cleanup:
     return ret;
 }
 
+/* Affiche un buffer en hexadécimal (debug) */
 void dump_hex(const char *label, const unsigned char *buf, size_t len, size_t show) {
     fprintf(stderr, "%s (%zu bytes):", label, len);
     size_t n = (show && show < len) ? show : len;
@@ -338,15 +370,28 @@ void dump_hex(const char *label, const unsigned char *buf, size_t len, size_t sh
     fprintf(stderr, "\n");
 }
 
+/* Affiche les 8 premiers octets du SHA-256 d'un buffer (empreinte abrégée) */
 void print_sha256(const char *label, const unsigned char *buf, size_t len) {
     unsigned char dgst[32];
     if (EVP_Digest(buf, len, dgst, NULL, EVP_sha256(), NULL)) {
         fprintf(stderr, "%s sha256: ", label);
-        for (int i = 0; i < 8; ++i) fprintf(stderr, "%02X", dgst[i]); // 8 bytes fingerprint
+        for (int i = 0; i < 8; ++i) fprintf(stderr, "%02X", dgst[i]); // empreinte 8 octets
         fprintf(stderr, "...\n");
     }
 }
 
+/*
+  Effectue le handshake DH signé et dérive la clé AES-256 finale.
+
+  Protocole (simplifié) :
+    - Sérialiser notre clé publique DH (DER)
+    - Signer cette DER avec notre clé privée DSA
+    - Envoyer (pub_der, signature)
+    - Recevoir (peer_pub_der, peer_signature)
+    - Vérifier la signature DSA du pair
+    - Calculer le secret DH partagé
+    - Dériver la clé AES-256 via HKDF
+*/
 int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer_sig_pub, unsigned char *aes_key_out) {
     int ok = 0;
     unsigned char *kx_pub_der = NULL, *sig_of_kx = NULL;
@@ -360,11 +405,11 @@ int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer
     kx_pub_der = pubkey_to_der(kx_priv, &kx_pub_len);
     if (!kx_pub_der) goto cleanup;
 
-    /* 2) Signer cette clé DH avec la clé privée DSA*/
+    /* 2) Signer cette clé DH avec la clé privée DSA */
     sig_of_kx = dsa_sign(sig_priv, kx_pub_der, kx_pub_len, &sig_of_kx_len);
     if (!sig_of_kx) goto cleanup;
 
-    /* 3) Log local key */
+    /* 3) Journaux (log) : tête/queue + empreintes */
     fprintf(stderr, "[LOCAL] DH public key length: %d\n", kx_pub_len);
     int head_len = kx_pub_len < 64 ? kx_pub_len : 64;
     int tail_len = head_len;
@@ -385,7 +430,7 @@ int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer
     if (recv_blob(sock, &sig_of_kx_peer, &len) < 0 || !sig_of_kx_peer) goto cleanup;
     uint32_t sig_of_kx_peer_len = len;
 
-    /* 7) Log received key */
+    /* 7) Journaux pour la clé reçue */
     fprintf(stderr, "[PEER] DH public key length: %d\n", peer_kx_len);
     head_len = peer_kx_len < 64 ? peer_kx_len : 64;
     tail_len = head_len;
@@ -396,11 +441,11 @@ int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer
 
     /* 8) Vérifier la signature DSA du pair */
     if (!dsa_verify(peer_sig_pub, kx_pub_peer, peer_kx_len, sig_of_kx_peer, sig_of_kx_peer_len)) {
-        fprintf(stderr, "Signature verification failed! Aborting handshake.\n");
+        fprintf(stderr, "Échec de la vérification de la signature ! Abandon du handshake.\n");
         goto cleanup;
     }
 
-    /* 9) Reconstruire la clé DH du pair */
+    /* 9) Reconstruire la clé DH du pair à partir du DER */
     peer_kx_key = der_to_pubkey(kx_pub_peer, peer_kx_len);
     if (!peer_kx_key) goto cleanup;
 
@@ -409,15 +454,15 @@ int do_handshake(int sock, EVP_PKEY *kx_priv, EVP_PKEY *sig_priv, EVP_PKEY *peer
     unsigned char *secret = dh_derive_shared(kx_priv, peer_kx_key, &secret_len);
     if (!secret) goto cleanup;
 
-    /* 11) Dériver la clé AES-256 à partir du secret DH*/
+    /* 11) Dériver la clé AES-256 à partir du secret DH */
     if (!derive_session_key_hkdf(secret, secret_len, aes_key_out, NULL, 0, NULL, 0)) {
       OPENSSL_free(secret);
       goto cleanup;
-}
+    }
 
     OPENSSL_free(secret);
 
-    /* 12) Log AES key */
+    /* 12) Journaliser la clé AES dérivée (debug uniquement) */
     fprintf(stderr, "[AES] Derived AES-256 key: ");
     for (int i = 0; i < 32; i++) fprintf(stderr, "%02X", aes_key_out[i]);
     fprintf(stderr, "\n");
